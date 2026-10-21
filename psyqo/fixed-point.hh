@@ -41,6 +41,9 @@ void printInt(uint32_t value, const eastl::function<void(char)>&, unsigned scale
 
 constexpr uint32_t iDiv(uint64_t rem, uint32_t base, unsigned scale) {
     rem *= scale;
+    // Most Q12 gameplay ratios fit the R3000A's unsigned DIV instruction.
+    // Keep the wide long division only when scaling actually needs it.
+    if (rem <= UINT32_MAX) return static_cast<uint32_t>(rem) / base;
     uint64_t b = base;
     uint64_t res, d = 1;
     uint32_t high = rem >> 32;
@@ -70,16 +73,11 @@ constexpr uint32_t iDiv(uint64_t rem, uint32_t base, unsigned scale) {
 }
 
 constexpr int32_t dDiv(int32_t a, int32_t b, unsigned scale) {
-    int s = 1;
-    if (a < 0) {
-        a = -a;
-        s = -1;
-    }
-    if (b < 0) {
-        b = -b;
-        s = -s;
-    }
-    return iDiv(a, b, scale) * s;
+    // Unsigned magnitudes also cover INT32_MIN without signed-negation UB.
+    const uint32_t numerator = a < 0 ? 0u - uint32_t(a) : uint32_t(a);
+    const uint32_t denominator = b < 0 ? 0u - uint32_t(b) : uint32_t(b);
+    const uint32_t quotient = iDiv(numerator, denominator, scale);
+    return int32_t((a < 0) != (b < 0) ? 0u - quotient : quotient);
 }
 
 }  // namespace FixedPointInternals

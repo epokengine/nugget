@@ -33,6 +33,7 @@ SOFTWARE.
 #include "psyqo/hardware/cpu.hh"
 #include "psyqo/hardware/sio.hh"
 #include "psyqo/kernel.hh"
+#include "psyqo/gpu.hh"
 
 using namespace psyqo::Hardware;
 
@@ -154,7 +155,7 @@ uint8_t psyqo::MemoryCard::exchangeByte(uint8_t out) {
     return ret;
 }
 
-void psyqo::MemoryCard::startTransfer(Action action, Port port, uint16_t sector, void *readBuf, const void *writeBuf) {
+void psyqo::MemoryCard::startTransfer(Action action, Port port, uint16_t sector, void *readBuf, const void *writeBuf, bool recovered) {
     m_action = action;
     m_port = port;
     m_sector = sector;
@@ -169,7 +170,7 @@ void psyqo::MemoryCard::startTransfer(Action action, Port port, uint16_t sector,
     // Give the card its inter-transaction recovery window (bus deselected)
     // before reselecting, so a slow third-party card is never reselected
     // mid-recovery and made to serve stale data.
-    recoverBeforeSelect();
+    if (!recovered) recoverBeforeSelect();
 
     // Select the port exactly the way the proven AdvancedPad / polling path do:
     // assert the port select, enable the transmitter and the acknowledge IRQ,
@@ -764,13 +765,24 @@ void psyqo::MemoryCard::startAsyncAttempt(Action action, Port port, uint16_t sec
                                           const void *writeBuf) {
     m_retryAction = action;
     m_callback = [this](Error result) { onAsyncAttemptDone(result); };
+    if (m_asyncGPU) {
+        // The filesystem keeps the SIO bus reserved across this delay. Keep
+        // /CS high for at least the previous ~16ms recovery interval while
+        // rendering and other callbacks continue to run.
+        SIO::Ctrl = 0;
+        m_asyncGPU->armTimer(m_asyncGPU->now() + 17000,
+            [this,action,port,sector,readBuf,writeBuf](uint32_t) {
+                startTransfer(action,port,sector,readBuf,writeBuf,true);
+            });
+        return;
+    }
     startTransfer(action, port, sector, readBuf, writeBuf);
 }
 
 void psyqo::MemoryCard::onAsyncAttemptDone(Error result) {
     // Runs from a queued main-thread callback, so re-issuing here is safe.
     if (result != Error::OK && isTransient(result) && ++m_attempt < c_maxAttempts) {
-        busyLoop(2000);  // brief recovery before retrying, matching the blocking path
+        if (!m_asyncGPU) busyLoop(2000);  // timer recovery also covers the retry gap
         startAsyncAttempt(m_retryAction, m_port, m_sector, m_readBuffer, m_writeBuffer);
         return;
     }

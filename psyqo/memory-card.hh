@@ -122,6 +122,10 @@ class MemoryCard {
      * bus and access is naturally serialized on the main thread.
      */
     void prepare();
+    // Optional for callback transfers: keep the recovery window deselected
+    // using a GPU timer instead of spinning on the main thread. The GPU and
+    // this singleton must outlive all outstanding card operations.
+    void useAsyncRecovery(GPU& gpu) { m_asyncGPU = &gpu; }
 
     /**
      * @brief Reads a single 128-byte sector synchronously.
@@ -230,7 +234,7 @@ class MemoryCard {
 
     void installIrqHandler();
     void irq();  // entered on each SIO0 (controller) acknowledge interrupt
-    void startTransfer(Action action, Port port, uint16_t sector, void *readBuf, const void *writeBuf);
+    void startTransfer(Action action, Port port, uint16_t sector, void *readBuf, const void *writeBuf, bool recovered=false);
     void finishTransfer(Error result);
     StepResult readStep();
     StepResult writeStep();
@@ -283,6 +287,7 @@ class MemoryCard {
     eastl::function<void(Error)> m_userCallback;
     Action m_retryAction = Action::None;
     unsigned m_attempt = 0;
+    GPU* m_asyncGPU = nullptr;
 
     // The first (addressing) byte uses this timeout to detect a missing card.
     // It is the one value that is deliberately generous: a present-but-slow
