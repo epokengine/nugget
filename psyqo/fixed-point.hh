@@ -147,8 +147,20 @@ class FixedPoint {
      * as the conversion from floating point to fixed point is
      * basically impossible to do at runtime without using floating
      * point arithmetic, which is not available on the PSX.
+     *
+     * Host builds with the Microsoft compiler (19.44 and 19.50) get a
+     * `constexpr` constructor instead: they miscompile a conditional
+     * operator with an immediate invocation as an operand, such as
+     * `c ? x : FixedPoint(0.5)`, which never writes its result object
+     * when `x` is selected. The PSX compiler still rejects run-time
+     * conversions.
      */
-    consteval FixedPoint(long double ld) {
+#if defined(_MSC_VER) && !defined(__clang__)
+    constexpr
+#else
+    consteval
+#endif
+    FixedPoint(long double ld) {
         bool negative = ld < 0;
         T integer = negative ? -ld : ld;
         T fraction = ld * scale - integer * scale + (negative ? -0.5 : 0.5);
