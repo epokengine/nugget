@@ -233,13 +233,18 @@ void psyqo::GPU::flip() {
         } else {
             Hardware::GPU::Ctrl = 0x05000000;
         }
-    } else if (!pcsx_present()) {
+    } else {
+        // PCSX exposes the display-field bit, but its drawing-line bit is not
+        // reliable at the frame boundary. It still needs field synchronization:
+        // with display-area drawing disabled, skipping this wait can submit
+        // every chain into the same unmasked field after a missed VBlank.
+        const bool emulated = pcsx_present();
         while (1) {
             uint32_t stat = Hardware::GPU::Ctrl;
             int isDrawingEven = (stat & 0x80000000) == 0;
             int isMaskingEven = (stat & 0x00002000) == 0;
-            if (parity && isDrawingEven && !isMaskingEven) break;
-            if (!parity && !isDrawingEven && isMaskingEven) break;
+            if (parity && (emulated || isDrawingEven) && !isMaskingEven) break;
+            if (!parity && (emulated || !isDrawingEven) && isMaskingEven) break;
             pumpCallbacks();
         }
     }
